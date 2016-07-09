@@ -27,6 +27,7 @@ def toposort(nodes, parents):
         yield from visit(u)
 
 
+"""
 def bfs(s, succ, f, stop):
     seen = set()
     q = deque((x,))
@@ -51,6 +52,7 @@ def dfs(s, succ):
         for v in succ(u):
             if v not in seen:
                 q.append(v)
+"""
 
 def randrange(n):
     a = (n.bit_length() + 7) // 8  # number of bytes to store n
@@ -59,6 +61,18 @@ def randrange(n):
     while r >= n:
         r = int.from_bytes(randombytes(a), byteorder='big') >> b
     return r
+
+def majority(it):
+    hits = [0, 0]
+    for x in it:
+        hits[int(x)] += 1
+    if hits[0] > hits[1]:
+        return False, hits[0]
+    elif hits[0] == hits[1]:
+        return True, hits[1]
+    else:
+        return True, hits[1]
+
 
 
 Event = namedtuple('Event', 'd p t c s')
@@ -98,12 +112,17 @@ class Node:
         # {event-hash => round-num}: assigned round number of each event
         self.round = {}
 
-        # round-num: highest round where famousness is fully decided
-        self.consensus = -1
+        # {round-num}: rounds where famousness is fully decided
+        self.consensus = set()
+        # {event-hash => {event-hash => bool}}
+        self.votes = {}
         # 
         self.recv_round = {}
-        # {round-num => {member-pk => (event-hash, trilean)}}: 
+        # {round-num => {member-pk => event-hash, trilean}}: 
         self.witnesses = defaultdict(dict)
+
+        # {round-num => {}}
+        self.election = defaultdict(dict)
 
         # {event-hash => int}: stores the number of self-ancestors for each event
         self.seq = {}
@@ -116,7 +135,7 @@ class Node:
         h, ev = self.new_event(None, ())
         self.hg[h] = ev
         self.round[h] = 0
-        self.witnesses[0][ev.c] = (h, Trilean.undetermined)
+        self.witnesses[0][ev.c] = [h, Trilean.undetermined]
         self.seq[h] = 0
 
     def new_event(self, d, p):
@@ -230,7 +249,7 @@ class Node:
                 # check if i can strongly see enough events
                 if sum(1 for x in hits if x > self.min_s) > self.min_s:
                     self.round[h] = r + 1
-                    self.witnesses[r + 1][ev.c] = (h, Trilean.undetermined)
+                    self.witnesses[r + 1][ev.c] = [h, Trilean.undetermined]
 
                     # we need to start again the recurrence relation since h
                     # was promoted to the next round
@@ -239,15 +258,48 @@ class Node:
                     self.round[h] = r
 
     def decide_fame(self):
-        n_rounds = max(self.witnesses)
-        for r in range(self.consensus + 1, n_rounds):
-            for x, t in self.witnesses[r]:
-                if t == Trilean.undetermined:
-                    ev = self.hg[w]
-                    for r_ in range(r+1, n_rounds+1):
-                        for y in self.witnesses[r_].items():
-                            s = {h for h in self.witnesses[r_ - 1]
-                                 if self.strongly_see(y, h)}
+        max_rounds = max(self.witnesses)
+        for r in filter(lambda r: r not in self.consensus, range(max_rounds)):
+            for x, fam in self.witnesses[r]:
+                if fam != Trilean.undetermined:
+                    continue
+                for r_ in range(r+1, max_rounds+1):
+                    for y in self.witnesses[r_].items():
+                        # reconstruct seeable witnesses from previous round
+                        can_see = self.merge(self.can_see[p] for p in ev.p
+                                             if self.round[p] == r_-1)
+                        can_see[self.hg[y].c] = y
+
+                        if r_ - r == 1:
+                            self.votes[y][x] = self.hg[x].c in can_see
+                        else:
+                            hits = defaultdict(int)
+                            for k in can_see.values():
+                                for c in self.can_see[k].keys():
+                                    hits[c] += 1
+
+                            s = {self.witnesses[r_ - 1][c] for c, n in hits
+                                 if n > self.min_s}
+                            t, v = majority(self.vote[w][x] for w in s)
+                            if (r_ - r) % C != 0:
+                                if t > self.min_s:
+                                    self.witnesses[r][self.hg[x].c][1] = Trilean.true
+                                    if all(w[1] != Trilean.undetermined for w in self.witnesses[r]):
+                                        self.consensus.add(r)
+                                    break
+                                else:
+                                    self.votes[y][x] = v
+                            else:
+                                if t > self.min_s:
+                                    self.votes[y][x] = v
+                                else:
+                                    # 8-th bit is same as any other bit right?
+                                    self.votes[y][x] = bool(self.hg[y].s[0] % 2)
+                    # some ugly hack to break two loops at a time
+                    else:
+                        continue
+                    break
+
 
     def main(self):
         """Main working loop."""
