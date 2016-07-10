@@ -40,7 +40,7 @@ def bfs(s, succ):
         for v in succ(u):
             if not v in seen:
                 q.append(v)
-"""
+
 
 def dfs(s, succ):
     seen = set()
@@ -52,7 +52,7 @@ def dfs(s, succ):
         for v in succ(u):
             if v not in seen:
                 q.append(v)
-"""
+
 
 def randrange(n):
     a = (n.bit_length() + 7) // 8  # number of bytes to store n
