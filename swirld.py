@@ -337,15 +337,10 @@ class Node:
         while True:
             payload = (yield)
             # pick a random node to sync with but not me
-            print('picking a node')
             c = tuple(self.network.keys() - {self.pk})[randrange(self.n - 1)]
-            print('syncing...')
             new = self.sync(c, payload)
-            assert all(p in self.seq for n in new for p in self.hg[n].p)
 
-            print('dividing rounds...')
             self.divide_rounds(new)
-            print('decinding fame...')
             self.decide_fame()
             #self.find_order()
 
