@@ -68,8 +68,6 @@ def majority(it):
         hits[int(x)] += 1
     if hits[0] > hits[1]:
         return False, hits[0]
-    elif hits[0] == hits[1]:
-        return True, hits[1]
     else:
         return True, hits[1]
 
@@ -121,8 +119,9 @@ class Node:
         self.votes = defaultdict(dict)
         # {event-hash => recv-round-num}: assigned 'received round' number
         self.recv_round = {}
-        # {round-num => {member-pk => event-hash, trilean}}: 
+        # {round-num => {member-pk => event-hash}}: 
         self.witnesses = defaultdict(dict)
+        self.famous = {}
 
         # {round-num => {}}
         self.election = defaultdict(dict)
@@ -139,7 +138,8 @@ class Node:
         self.hg[h] = ev
         self.head = h
         self.round[h] = 0
-        self.witnesses[0][ev.c] = [h, Trilean.undetermined]
+        self.witnesses[0][ev.c] = h
+        self.famous[h] = Trilean.undetermined
         self.seq[h] = 0
         self.can_see[h] = {ev.c: h}
 
@@ -237,7 +237,8 @@ class Node:
             ev = self.hg[h]
             if ev.p == ():  # this is a root event
                 self.round[h] = 0
-                self.witnesses[0][ev.c] = [h, Trilean.undetermined]
+                self.witnesses[0][ev.c] = h
+                self.famous[h] = Trilean.undetermined
                 self.can_see[h] = {ev.c: h}
             else:
                 r = max(self.round[p] for p in ev.p)
@@ -257,7 +258,8 @@ class Node:
                 # check if i can strongly see enough events
                 if sum(1 for x in hits.values() if x > self.min_s) > self.min_s:
                     self.round[h] = r + 1
-                    self.witnesses[r + 1][ev.c] = [h, Trilean.undetermined]
+                    self.witnesses[r + 1][ev.c] = h
+                    self.famous[h] = Trilean.undetermined
 
                     # we need to start again the recurrence relation since h
                     # was promoted to the next round
@@ -273,46 +275,45 @@ class Node:
         def iter_undetermined():
             for r in filter(lambda r: r not in self.consensus,
                             range(max_round)):
-                for (x, fam) in self.witnesses[r].values():
-                    if fam == Trilean.undetermined:
-                        yield r, x
+                for w in self.witnesses[r].values():
+                    if self.famous[w] == Trilean.undetermined:
+                        yield r, w
 
         def iter_voters(r):
             for r_ in range(r + 1, max_round + 1):
-                for y in self.witnesses[r_].values():
-                    yield r_, y[0]
+                for w in self.witnesses[r_].values():
+                    yield r_, w
 
         for r, x in iter_undetermined():
-            print('voting for: ', x)
             for r_, y in iter_voters(r):
-                print('casting vote of: ', y)
                 # reconstruct seeable witnesses from previous round
                 can_see = self.merge(self.can_see[p] for p in self.hg[y].p
                                      if self.round[p] == r_-1)
-                assert all(self.round[p] == r_ - 1 for u in can_see.values() for p in self.can_see[u].values())
-                #can_see[self.hg[y].c] = y
 
                 if r_ - r == 1:
-                    self.votes[y][x] = self.hg[x].c in can_see
+                    maxi = None
+                    for u in bfs(y, lambda u: sorted(self.hg[u].p, key=self.seq.__getitem__, reverse=True)):
+                        if self.hg[u].c == self.hg[x]:
+                            maxi = u
+                            break
+                    self.votes[y][x] = maxi is not None and self.seq[maxi] >= self.seq[x]
                 else:
                     hits = defaultdict(int)
                     for k in can_see.values():
                         for c in self.can_see[k].keys():
-                            hits[c] += 1
+                            if c in self.witnesses[r_-1]:
+                                hits[c] += 1
 
-                    print(tuple(c for c in hits if c not in self.witnesses[r_-1]))
-                    print(r_, r)
-                    s = {self.witnesses[r_ - 1][c][0] for c, n in hits.items()
+                    s = {self.witnesses[r_ - 1][c] for c, n in hits.items()
                          if n > self.min_s}
-                    t, v = majority(self.vote[w][x] for w in s)
-                    print('vote proportion: ', t, self.min_s)
+                    v, t = majority(self.votes[w][x] for w in s)
                     if (r_ - r) % C != 0:
                         if t > self.min_s:
                             if v:
-                               self.witnesses[r][self.hg[x].c][1] = Trilean.true
+                               self.famous[x] = Trilean.true
                             else:
-                               self.witnesses[r][self.hg[x].c][1] = Trilean.false
-                            if all(w[1] != Trilean.undetermined for w in self.witnesses[r]):
+                               self.famous[x] = Trilean.false
+                            if all(self.famous[w] != Trilean.undetermined for w in self.witnesses[r].values()):
                                 self.consensus.add(r)
                             break
                         else:
@@ -321,17 +322,14 @@ class Node:
                         if t > self.min_s:
                             self.votes[y][x] = v
                         else:
-                            # 8-th bit is same as any other bit right?
+                            # the 8-th bit is same as any other bit right?
                             self.votes[y][x] = bool(self.hg[y].s[0] % 2)
             r = 0
             while (r not in self.consensus and len(self.witnesses[r]) > 0
-                   and all(w[1] != Trilean.undetermined for w in self.witnesses[r])):
+                   and all(self.famous[w] != Trilean.undetermined for w in self.witnesses[r].values())):
                 self.consensus.add(r)
                 r += 1
-
-    #def find_order(self):
-    #    r_max = next(dropwhile(lambda r: , range(max(self.witnesses) + 1)))
-    #    while all()
+            print('consensus: ', self.consensus)
 
     def main(self):
         """Main working loop."""
@@ -348,7 +346,7 @@ class Node:
             print('dividing rounds...')
             self.divide_rounds(new)
             print('decinding fame...')
-            #self.decide_fame()
+            self.decide_fame()
             #self.find_order()
 
     def plot(self, arrows=True, color='rounds'):
@@ -357,15 +355,14 @@ class Node:
         cs = list(colors.cnames)
         cr = {c: i for i, c in enumerate(self.network)}
         if color == 'rounds':
-            col = lambda u: cs[self.round[u]]
+            col = lambda u: 'red' if self.hg[u].c in self.witnesses[self.round[u]] and self.witnesses[self.round[u]][self.hg[u].c] == u else cs[self.round[u]]
         elif color == 'witness':
             def col(u):
                 if self.hg[u].c in self.witnesses[self.round[u]]:
-                    w = self.witnesses[self.round[u]][self.hg[u].c]
-                    if w[0] == u:
-                        if w[1] == Trilean.false:
+                    if self.witnesses[self.round[u]][self.hg[u].c] == u:
+                        if self.famous[u] == Trilean.false:
                             return 'red'
-                        elif w[1] == Trilean.undetermined:
+                        elif self.famous[u] == Trilean.undetermined:
                             return 'orange'
                         else:
                             return 'green'
