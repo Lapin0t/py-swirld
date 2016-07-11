@@ -258,14 +258,14 @@ class Node:
                 # check if i can strongly see enough events
                 if sum(1 for x in hits.values() if x > self.min_s) > self.min_s:
                     self.round[h] = r + 1
+                else:
+                    self.round[h] = r
+                if self.round[h] > self.round[ev.p[0]]:
                     self.witnesses[r + 1][ev.c] = h
                     self.famous[h] = Trilean.undetermined
-
                     # we need to start again the recurrence relation since h
                     # was promoted to the next round
                     self.can_see[h] = {ev.c: h}
-                else:
-                    self.round[h] = r
 
     def decide_fame(self):
         max_round = max(self.witnesses)
@@ -286,9 +286,11 @@ class Node:
 
         for r, x in iter_undetermined():
             for r_, y in iter_voters(r):
+                print(r, r_)
                 # reconstruct seeable witnesses from previous round
                 can_see = self.merge(self.can_see[p] for p in self.hg[y].p
                                      if self.round[p] == r_-1)
+                print('done merging')
 
                 if r_ - r == 1:
                     maxi = None
@@ -298,6 +300,7 @@ class Node:
                             break
                     self.votes[y][x] = maxi is not None and self.seq[maxi] >= self.seq[x]
                 else:
+                    print('counting hits')
                     hits = defaultdict(int)
                     for k in can_see.values():
                         for c in self.can_see[k].keys():
@@ -306,6 +309,7 @@ class Node:
 
                     s = {self.witnesses[r_ - 1][c] for c, n in hits.items()
                          if n > self.min_s}
+                    print('done counting hits, len(can_see)=%i' % len(can_see))
                     v, t = majority(self.votes[w][x] for w in s)
                     if (r_ - r) % C != 0:
                         if t > self.min_s:
@@ -324,11 +328,6 @@ class Node:
                         else:
                             # the 8-th bit is same as any other bit right?
                             self.votes[y][x] = bool(self.hg[y].s[0] % 2)
-            r = 0
-            while (r not in self.consensus and len(self.witnesses[r]) > 0
-                   and all(self.famous[w] != Trilean.undetermined for w in self.witnesses[r].values())):
-                self.consensus.add(r)
-                r += 1
             print('consensus: ', self.consensus)
 
     def main(self):
@@ -350,7 +349,7 @@ class Node:
         cs = list(colors.cnames)
         cr = {c: i for i, c in enumerate(self.network)}
         if color == 'rounds':
-            col = lambda u: 'red' if self.hg[u].c in self.witnesses[self.round[u]] and self.witnesses[self.round[u]][self.hg[u].c] == u else cs[self.round[u]]
+            col = lambda u: 'red' if u in self.famous else cs[self.round[u]]
         elif color == 'witness':
             def col(u):
                 if self.hg[u].c in self.witnesses[self.round[u]]:
