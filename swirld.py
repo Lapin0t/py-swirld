@@ -3,6 +3,7 @@ from pickle import dumps, loads
 from random import choice
 from time import time
 from math import atan2, sin, cos
+from itertools import zip_longest
 
 from pysodium import (crypto_sign_keypair, crypto_sign, crypto_sign_open,
                       crypto_sign_detached, crypto_sign_verify_detached,
@@ -123,9 +124,6 @@ class Node:
         self.witnesses = defaultdict(dict)
         self.famous = {}
 
-        # {round-num => {}}
-        self.election = defaultdict(dict)
-
         # {event-hash => int}: stores the number of self-ancestors for each event
         self.seq = {}
         # {event-hash => {member-pk => event-hash}}: stores for each event ev
@@ -215,17 +213,19 @@ class Node:
         msg = dumps((self.head, self.hg))
         return crypto_sign(msg, self.sk)
 
-    def merge(self, it):
-        """Merge to dicts by taking the highest event in case of conflict."""
+    def ancestors(self, c):
+        while True:
+            yield c
+            if not self.hg[c].p:
+                return
+            c = self.hg[c].p[0]
 
-        new = {}
-        for d in it:
-            for k, v in d.items():
-                if k in new:
-                    new[k] = max(new[k], v, key=self.seq.__getitem__)
-                else:
-                    new[k] = v
-        return new
+    def maxi(self, a, b):
+        for x, y in zip_longest(self.ancestors(a), self.ancestors(b)):
+            if x == b or y is None:
+                return a
+            elif y == b or x is None:
+                return b
 
     def divide_rounds(self, events):
         """Restore invariants for `can_see`, `witnesses` and `round`.
@@ -244,72 +244,75 @@ class Node:
                 r = max(self.round[p] for p in ev.p)
 
                 # recurrence relation to update can_see
-                self.can_see[h] = self.merge(self.can_see[p] for p in ev.p
-                                             if self.round[p] == r)
+                p0, p1 = (self.can_see[p] for p in ev.p)
+                self.can_see[h] = {c: self.maxi(p0.get(c), p1.get(c)) for c in p0.keys() | p1.keys()}
 
-                self.can_see[h][ev.c] = h
 
                 # count distinct paths to distinct nodes
                 hits = defaultdict(int)
                 for k in self.can_see[h].values():
-                    for c in self.can_see[k].keys():
-                        hits[c] += 1
+                    for c, k_ in self.can_see[k].items():
+                        if self.round[k_] == r:
+                            hits[c] += 1
 
                 # check if i can strongly see enough events
                 if sum(1 for x in hits.values() if x > self.min_s) > self.min_s:
                     self.round[h] = r + 1
                 else:
                     self.round[h] = r
+                self.can_see[h][ev.c] = h
                 if self.round[h] > self.round[ev.p[0]]:
-                    self.witnesses[r + 1][ev.c] = h
+                    self.witnesses[self.round[h]][ev.c] = h
                     self.famous[h] = Trilean.undetermined
-                    # we need to start again the recurrence relation since h
-                    # was promoted to the next round
-                    self.can_see[h] = {ev.c: h}
 
     def decide_fame(self):
-        max_round = max(self.witnesses)
-        print('max round: ', max_round)
+        max_r = max(self.witnesses)
+        max_c = 0
+        while max_c in self.consensus:
+            max_c += 1
 
         # helpers to keep code clean
-        def iter_undetermined():
-            for r in filter(lambda r: r not in self.consensus,
-                            range(max_round)):
-                for w in self.witnesses[r].values():
-                    if self.famous[w] == Trilean.undetermined:
-                        yield r, w
+        def iter_undetermined(r_):
+            for r in range(max_c, r_):
+                if r not in self.consensus:
+                    for w in self.witnesses[r].values():
+                        if self.famous[w] == Trilean.undetermined:
+                            yield r, w
 
-        def iter_voters(r):
-            for r_ in range(r + 1, max_round + 1):
+        def iter_voters():
+            for r_ in range(max_c + 1, max_r + 1):
                 for w in self.witnesses[r_].values():
                     yield r_, w
 
-        for r, x in iter_undetermined():
-            for r_, y in iter_voters(r):
-                print(r, r_)
-                # reconstruct seeable witnesses from previous round
-                can_see = self.merge(self.can_see[p] for p in self.hg[y].p
-                                     if self.round[p] == r_-1)
-                print('done merging')
+        done = {(b, a) for a in self.votes for b in self.votes[a].keys()}
+        ys = set(self.votes)
+        for r_, y in iter_voters():
+            ys.add(y)
+            hits = defaultdict(int)
+            for k in self.can_see[y].values():
+                for c, k_ in self.can_see[k].items():
+                    if self.round[k_] == r_ - 1:
+                        hits[c] += 1
+
+            s = {self.witnesses[r_ - 1][c] for c, n in hits.items()
+                 if n > self.min_s}
+
+            for r, x in iter_undetermined(r_):
+                done.add((x, y))
+                print(r, r_, x, y)
 
                 if r_ - r == 1:
-                    maxi = None
-                    for u in bfs(y, lambda u: sorted(self.hg[u].p, key=self.seq.__getitem__, reverse=True)):
-                        if self.hg[u].c == self.hg[x]:
-                            maxi = u
-                            break
-                    self.votes[y][x] = maxi is not None and self.seq[maxi] >= self.seq[x]
+                    self.votes[y][x] = x in s
                 else:
-                    print('counting hits')
-                    hits = defaultdict(int)
-                    for k in can_see.values():
-                        for c in self.can_see[k].keys():
-                            if c in self.witnesses[r_-1]:
-                                hits[c] += 1
-
-                    s = {self.witnesses[r_ - 1][c] for c, n in hits.items()
-                         if n > self.min_s}
-                    print('done counting hits, len(can_see)=%i' % len(can_see))
+                    print('done?: ', all((x, w) in done for w in s))
+                    if s:
+                        print('rounds: ' + ', '.join(str(self.round[w]) for w in s))
+                    a = [w for w in s if x not in self.votes[w]]
+                    assert all(w in ys for w in s)
+                    assert self.famous[x] == Trilean.undetermined
+                    if a:
+                        print('!!! FAILS: ' + ', '.join(map(str, a)))
+                        continue
                     v, t = majority(self.votes[w][x] for w in s)
                     if (r_ - r) % C != 0:
                         if t > self.min_s:
@@ -317,7 +320,8 @@ class Node:
                                self.famous[x] = Trilean.true
                             else:
                                self.famous[x] = Trilean.false
-                            if all(self.famous[w] != Trilean.undetermined for w in self.witnesses[r].values()):
+                            if all(self.famous[w] != Trilean.undetermined
+                                   for w in self.witnesses[r].values()):
                                 self.consensus.add(r)
                             break
                         else:
@@ -326,9 +330,11 @@ class Node:
                         if t > self.min_s:
                             self.votes[y][x] = v
                         else:
-                            # the 8-th bit is same as any other bit right?
-                            self.votes[y][x] = bool(self.hg[y].s[0] % 2)
-            print('consensus: ', self.consensus)
+                            # the 1st bit is same as any other bit right?
+                            self.votes[y][x] = bool(self.hg[y].s[0] // 128)
+
+    def find_order(self):
+        pass
 
     def main(self):
         """Main working loop."""
@@ -395,5 +401,3 @@ def test(n_nodes, n_turns):
         print('working node: ', r)
         next(mains[r])
     return nodes
-
-
