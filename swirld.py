@@ -284,10 +284,7 @@ class Node:
                 for w in self.witnesses[r_].values():
                     yield r_, w
 
-        done = {(b, a) for a in self.votes for b in self.votes[a].keys()}
-        ys = set(self.votes)
         for r_, y in iter_voters():
-            ys.add(y)
             hits = defaultdict(int)
             for k in self.can_see[y].values():
                 for c, k_ in self.can_see[k].items():
@@ -298,21 +295,9 @@ class Node:
                  if n > self.min_s}
 
             for r, x in iter_undetermined(r_):
-                done.add((x, y))
-                print(r, r_, x, y)
-
                 if r_ - r == 1:
                     self.votes[y][x] = x in s
                 else:
-                    print('done?: ', all((x, w) in done for w in s))
-                    if s:
-                        print('rounds: ' + ', '.join(str(self.round[w]) for w in s))
-                    a = [w for w in s if x not in self.votes[w]]
-                    assert all(w in ys for w in s)
-                    assert self.famous[x] == Trilean.undetermined
-                    if a:
-                        print('!!! FAILS: ' + ', '.join(map(str, a)))
-                        continue
                     v, t = majority(self.votes[w][x] for w in s)
                     if (r_ - r) % C != 0:
                         if t > self.min_s:
@@ -323,7 +308,6 @@ class Node:
                             if all(self.famous[w] != Trilean.undetermined
                                    for w in self.witnesses[r].values()):
                                 self.consensus.add(r)
-                            break
                         else:
                             self.votes[y][x] = v
                     else:
