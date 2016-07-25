@@ -28,10 +28,12 @@ def idx_color(r):
 
 class App:
     def __init__(self, n_nodes):
+        self.i = 0
         kps = [crypto_sign_keypair() for _ in range(n_nodes)]
+        stake = {kp[0]: 1 for kp in kps}
 
         network = {}
-        self.nodes = [Node(kp, network, n_nodes) for kp in kps]
+        self.nodes = [Node(kp, network, n_nodes, stake) for kp in kps]
         for n in self.nodes:
             network[n.pk] = n.ask_sync
         self.ids = {kp[0]: i for i, kp in enumerate(kps)}
@@ -43,7 +45,7 @@ class App:
         def toggle():
             if play.label == '► Play':
                 play.label = '❚❚ Pause'
-                curdoc().add_periodic_callback(self.animate, 100)
+                curdoc().add_periodic_callback(self.animate, 50)
             else:
                 play.label = '► Play'
                 curdoc().remove_periodic_callback(self.animate)
@@ -138,7 +140,8 @@ class App:
 
     def animate(self):
         r = randrange(len(self.main_its))
-        print('working node: %i' % r)
+        print('working node: %i, event number: %i' % (r, self.i))
+        self.i += 1
         new = next(self.main_its[r])
         if r == self.active:
             tr, links = self.extract_data(self.nodes[r], new, len(self.tr_src.data['x']))

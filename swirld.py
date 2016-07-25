@@ -17,8 +17,8 @@ C = 6
 
 def majority(it):
     hits = [0, 0]
-    for x in it:
-        hits[int(x)] += 1
+    for s, x in it:
+        hits[int(x)] += s
     if hits[0] > hits[1]:
         return False, hits[0]
     else:
@@ -33,11 +33,13 @@ class Trilean:
 
 
 class Node:
-    def __init__(self, kp, network, n_nodes):
+    def __init__(self, kp, network, n_nodes, stake):
         self.pk, self.sk = kp
         self.network = network  # {pk -> Node.ask_sync} dict
         self.n = n_nodes
-        self.min_s = 2 * self.n / 3  # min stake amount
+        self.stake = stake
+        self.tot_stake = sum(stake.values())
+        self.min_s = 2 * self.tot_stake / 3  # min stake amount
 
 
         # {event-hash => event}: this is the hash graph
@@ -169,12 +171,15 @@ class Node:
         else:
             return b
 
-    def higher(self, a, b):
+    def _higher(self, a, b):
         for x, y in zip_longest(self.ancestors(a), self.ancestors(b)):
             if x == b or y is None:
                 return True
             elif y == a or x is None:
                 return False
+
+    def higher(self, a, b):
+        return a is not None and (b is None or self.height[a] >= self.height[b])
 
 
     def divide_rounds(self, events):
@@ -200,11 +205,11 @@ class Node:
 
                 # count distinct paths to distinct nodes
                 hits = defaultdict(int)
-                for k in self.can_see[h].values():
-                    for c, k_ in self.can_see[k].items():
-                        if self.round[k_] == r:
-                            hits[c] += 1
-
+                for c, k in self.can_see[h].items():
+                    if self.round[k] == r:
+                        for c_, k_ in self.can_see[k].items():
+                            if self.round[k_] == r:
+                                hits[c_] += self.stake[c]
                 # check if i can strongly see enough events
                 if sum(1 for x in hits.values() if x > self.min_s) > self.min_s:
                     self.round[h] = r + 1
@@ -238,10 +243,11 @@ class Node:
         for r_, y in iter_voters():
 
             hits = defaultdict(int)
-            for k in self.can_see[y].values():
-                for c, k_ in self.can_see[k].items():
-                    if self.round[k_] == r_ - 1:
-                        hits[c] += 1
+            for c, k in self.can_see[y].items():
+                if self.round[k] == r_ - 1:
+                    for c_, k_ in self.can_see[k].items():
+                        if self.round[k_] == r_ - 1:
+                            hits[c_] += self.stake[c]
             s = {self.witnesses[r_ - 1][c] for c, n in hits.items()
                  if n > self.min_s}
 
@@ -249,7 +255,7 @@ class Node:
                 if r_ - r == 1:
                     self.votes[y][x] = x in s
                 else:
-                    v, t = majority(self.votes[w][x] for w in s)
+                    v, t = majority((self.stake[self.hg[w].c], self.votes[w][x]) for w in s)
                     if (r_ - r) % C != 0:
                         if t > self.min_s:
                             self.famous[x] = v
@@ -282,7 +288,7 @@ class Node:
                 c = self.hg[x].c
                 s = {w for w in f_w if c in self.can_see[w]
                                     and self.higher(self.can_see[w][c], x)}
-                if len(s) > self.n / 2:
+                if sum(self.stake[self.hg[w].c] for w in s) > self.tot_stake / 2:
                     self.tbd.remove(x)
                     seen.add(x)
                     times = []
@@ -323,7 +329,8 @@ class Node:
 def test(n_nodes, n_turns):
     kps = [crypto_sign_keypair() for _ in range(n_nodes)]
     network = {}
-    nodes = [Node(kp, network, n_nodes) for kp in kps]
+    stake = {kp[0]: 1 for kp in kps}
+    nodes = [Node(kp, network, n_nodes, stake) for kp in kps]
     for n in nodes:
         network[n.pk] = n.ask_sync
     mains = [n.main() for n in nodes]
