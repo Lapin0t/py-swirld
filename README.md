@@ -8,6 +8,7 @@ It seems to work as intended to me but don't take it for granted!
 
 ## Dependencies
 
+- python3 (obviously!)
 - [pysodium](https://pypi.python.org/pypi/pysodium) for the crypto
 - [bokeh](http://bokeh.pydata.org/en/latest/) for the analysis and interactive
   visualization
