@@ -5,7 +5,7 @@ from time import time
 from itertools import zip_longest
 from functools import reduce
 
-from pysodium import (crypto_sign, crypto_sign_open,
+from pysodium import (crypto_sign_keypair, crypto_sign, crypto_sign_open,
                       crypto_sign_detached, crypto_sign_verify_detached,
                       crypto_generichash)
 
@@ -318,3 +318,19 @@ class Node:
 
             new_c = self.decide_fame()
             self.find_order(new_c)
+
+
+def test(n_nodes, n_turns):
+    kps = [crypto_sign_keypair() for _ in range(n_nodes)]
+    network = {}
+    nodes = [Node(kp, network, n_nodes) for kp in kps]
+    for n in nodes:
+        network[n.pk] = n.ask_sync
+    mains = [n.main() for n in nodes]
+    for m in mains:
+        next(m)
+    for i in range(n_turns):
+        r = randrange(n_nodes)
+        print('working node: %i, event number: %i' % (r, i))
+        next(mains[r])
+    return nodes
