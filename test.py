@@ -30,7 +30,6 @@ def plot(node):
               'as': [1 if node.famous.get(u) else 0.4 for u in nodes],
               'las': [1 if node.famous.get(u) else 0 for u in nodes]})
     tr_rend = p.circle('xs', 'ys', size=8, source=source, color='cs', fill_alpha='as', line_alpha='las')
-    print(tr_rend.data_source.data)
     show(p)
 
 
@@ -43,9 +42,9 @@ def test(n_nodes, n_turns):
     mains = [n.main() for n in nodes]
     for m in mains:
         next(m)
-    for _ in range(n_turns):
+    for i in range(n_turns):
         r = randrange(n_nodes)
-        print('working node: ', r)
+        print('working node: %i, event number: %i' % (r, i))
         next(mains[r])
     return nodes
 

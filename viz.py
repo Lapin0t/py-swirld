@@ -43,7 +43,7 @@ class App:
         def toggle():
             if play.label == '► Play':
                 play.label = '❚❚ Pause'
-                curdoc().add_periodic_callback(self.animate, 50)
+                curdoc().add_periodic_callback(self.animate, 100)
             else:
                 play.label = '► Play'
                 curdoc().remove_periodic_callback(self.animate)
@@ -138,6 +138,7 @@ class App:
 
     def animate(self):
         r = randrange(len(self.main_its))
+        print('working node: %i' % r)
         new = next(self.main_its[r])
         if r == self.active:
             tr, links = self.extract_data(self.nodes[r], new, len(self.tr_src.data['x']))

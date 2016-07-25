@@ -118,7 +118,9 @@ class Node:
     def sync(self, pk, payload):
         """Update hg and return new event ids in topological order."""
 
-        msg = crypto_sign_open(self.network[pk](), pk)
+        info = crypto_sign(dumps({c: self.height[h]
+                for c, h in self.can_see[self.head].items()}), self.sk)
+        msg = crypto_sign_open(self.network[pk](self.pk, info), pk)
 
         remote_head, remote_hg = loads(msg)
         new = tuple(toposort(remote_hg.keys() - self.hg.keys(),
@@ -139,12 +141,19 @@ class Node:
 
         return new + (h,)
 
-    def ask_sync(self):
+    def ask_sync(self, pk, info):
         """Respond to someone wanting to sync (only public method)."""
 
         # TODO: only send a diff? maybe with the help of self.height
         # TODO: thread safe? (allow to run while mainloop is running)
-        msg = dumps((self.head, self.hg))
+
+        cs = loads(crypto_sign_open(info, pk))
+
+        subset = {h: self.hg[h] for h in bfs(
+            (self.head,),
+            lambda u: (p for p in self.hg[u].p
+                       if self.hg[p].c not in cs or self.height[p] > cs[self.hg[p].c]))}
+        msg = dumps((self.head, subset))
         return crypto_sign(msg, self.sk)
 
     def ancestors(self, c):
@@ -290,6 +299,8 @@ class Node:
             for i, x in enumerate(final):
                 self.idx[x] = i + len(self.transactions)
             self.transactions += final
+        if self.consensus:
+            print(self.consensus)
 
 
 
