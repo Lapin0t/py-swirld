@@ -2,14 +2,14 @@ from collections import namedtuple, defaultdict
 from pickle import dumps, loads
 from random import choice
 from time import time
-from itertools import zip_longest
+from itertools import izip_longest
 from functools import reduce
 
 from pysodium import (crypto_sign, crypto_sign_open,
                       crypto_sign_detached, crypto_sign_verify_detached,
                       crypto_generichash)
 
-from utils import bfs, toposort, randrange
+from utils import bfs, toposort, randrange, from_bytes
 
 
 C = 6
@@ -121,7 +121,7 @@ class Node:
         msg = crypto_sign_open(self.network[pk](), pk)
 
         remote_head, remote_hg = loads(msg)
-        new = tuple(toposort(remote_hg.keys() - self.hg.keys(),
+        new = tuple(toposort(remote_hg.viewkeys() - self.hg.viewkeys(),
                        lambda u: remote_hg[u].p))
 
         for h in new:
@@ -161,7 +161,7 @@ class Node:
             return b
 
     def higher(self, a, b):
-        for x, y in zip_longest(self.ancestors(a), self.ancestors(b)):
+        for x, y in izip_longest(self.ancestors(a), self.ancestors(b)):
             if x == b or y is None:
                 return True
             elif y == a or x is None:
@@ -186,7 +186,7 @@ class Node:
                 # recurrence relation to update can_see
                 p0, p1 = (self.can_see[p] for p in ev.p)
                 self.can_see[h] = {c: self.maxi(p0.get(c), p1.get(c))
-                                   for c in p0.keys() | p1.keys()}
+                                   for c in p0.viewkeys() | p1.viewkeys()}
 
 
                 # count distinct paths to distinct nodes
@@ -261,7 +261,7 @@ class Node:
 
 
     def find_order(self, new_c):
-        to_int = lambda x: int.from_bytes(self.hg[x].s, byteorder='big')
+        to_int = lambda x: from_bytes(self.hg[x].s, byteorder='big')
 
         for r in sorted(new_c):
             f_w = {w for w in self.witnesses[r].values() if self.famous[w]}
@@ -301,7 +301,7 @@ class Node:
             payload = (yield new)
 
             # pick a random node to sync with but not me
-            c = tuple(self.network.keys() - {self.pk})[randrange(self.n - 1)]
+            c = tuple(self.network.viewkeys() - {self.pk})[randrange(self.n - 1)]
             new = self.sync(c, payload)
             self.divide_rounds(new)
 
