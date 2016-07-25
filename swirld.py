@@ -1,67 +1,19 @@
-from collections import namedtuple, defaultdict, deque
+from collections import namedtuple, defaultdict
 from pickle import dumps, loads
 from random import choice
 from time import time
-from math import atan2, sin, cos
 from itertools import zip_longest
+from functools import reduce
 
-from pysodium import (crypto_sign_keypair, crypto_sign, crypto_sign_open,
+from pysodium import (crypto_sign, crypto_sign_open,
                       crypto_sign_detached, crypto_sign_verify_detached,
-                      crypto_generichash, randombytes)
-import matplotlib.pyplot as plt
-from matplotlib import colors
+                      crypto_generichash)
+
+from utils import bfs, toposort, randrange
 
 
 C = 6
 
-
-def toposort(nodes, parents):
-    seen = {}
-    def visit(u):
-        if u in seen:
-            if seen[u] == 0:
-                raise ValueError('not a DAG')
-        elif u in nodes:
-            seen[u] = 0
-            for v in parents(u):
-                yield from visit(v)
-            seen[u] = 1
-            yield u
-    for u in nodes:
-        yield from visit(u)
-
-
-def bfs(s, succ):
-    seen = set()
-    q = deque((s,))
-    while q:
-        u = q.popleft()
-        yield u
-        seen.add(u)
-        for v in succ(u):
-            if not v in seen:
-                q.append(v)
-
-
-def dfs(s, succ):
-    seen = set()
-    q = [s]
-    while q:
-        u = q.pop()
-        yield u
-        seen.add(u)
-        for v in succ(u):
-            if v not in seen:
-                q.append(v)
-
-
-def randrange(n):
-    a = (n.bit_length() + 7) // 8  # number of bytes to store n
-    b = 8 * a - n.bit_length()     # number of shifts to have good bit number
-    r = int.from_bytes(randombytes(a), byteorder='big') >> b
-    while r >= n:
-        r = int.from_bytes(randombytes(a), byteorder='big') >> b
-    return r
 
 def majority(it):
     hits = [0, 0]
@@ -73,27 +25,11 @@ def majority(it):
         return True, hits[1]
 
 
-
 Event = namedtuple('Event', 'd p t c s')
 class Trilean:
     false = 0
     true = 1
     undetermined = 2
-
-class defaultlist(list):
-    def __init__(self, f):
-        self._f = f
-        super().__init__()
-
-    def __getitem__(self, idx):
-        while len(self) <= idx:
-            self.append(self._f())
-        return super().__getitem__(idx)
-
-    def __setitem__(self, idx, val):
-        while len(self) <= idx:
-            self.append(self._f())
-        return super().__setitem__(idx, val)
 
 
 class Node:
@@ -124,8 +60,9 @@ class Node:
         self.witnesses = defaultdict(dict)
         self.famous = {}
 
-        # {event-hash => int}: stores the number of self-ancestors for each event
-        self.seq = {}
+        # {event-hash => int}: 0 or 1 + max(height of parents) (only useful for
+        # drawing, it may move to viz.py)
+        self.height = {}
         # {event-hash => {member-pk => event-hash}}: stores for each event ev
         # and for each member m the latest event from m having same round
         # number as ev that ev can see
@@ -133,13 +70,11 @@ class Node:
 
         # init first local event
         h, ev = self.new_event(None, ())
-        self.hg[h] = ev
-        self.head = h
+        self.add_event(h, ev)
         self.round[h] = 0
         self.witnesses[0][ev.c] = h
-        self.famous[h] = Trilean.undetermined
-        self.seq[h] = 0
         self.can_see[h] = {ev.c: h}
+        self.head = h
 
     def new_event(self, d, p):
         """Create a new event (and also return it's hash)."""
@@ -177,9 +112,9 @@ class Node:
         self.hg[h] = ev
         self.tbd.add(h)
         if ev.p == ():
-            self.seq[h] = 0
+            self.height[h] = 0
         else:
-            self.seq[h] = self.seq[ev.p[0]] + 1
+            self.height[h] = max(self.height[p] for p in ev.p) + 1
 
     def sync(self, pk, payload):
         """Update hg and return new event ids in topological order."""
@@ -208,7 +143,7 @@ class Node:
     def ask_sync(self):
         """Respond to someone wanting to sync (only public method)."""
 
-        # TODO: only send a diff? maybe with the help of self.seq
+        # TODO: only send a diff? maybe with the help of self.height
         # TODO: thread safe? (allow to run while mainloop is running)
         msg = dumps((self.head, self.hg))
         return crypto_sign(msg, self.sk)
@@ -227,6 +162,14 @@ class Node:
             elif y == b or x is None:
                 return b
 
+    def higher(self, a, b):
+        for x, y in zip_longest(self.ancestors(a), self.ancestors(b)):
+            if x == b or y is None:
+                return True
+            elif y == a or x is None:
+                return False
+
+
     def divide_rounds(self, events):
         """Restore invariants for `can_see`, `witnesses` and `round`.
 
@@ -238,14 +181,14 @@ class Node:
             if ev.p == ():  # this is a root event
                 self.round[h] = 0
                 self.witnesses[0][ev.c] = h
-                self.famous[h] = Trilean.undetermined
                 self.can_see[h] = {ev.c: h}
             else:
                 r = max(self.round[p] for p in ev.p)
 
                 # recurrence relation to update can_see
                 p0, p1 = (self.can_see[p] for p in ev.p)
-                self.can_see[h] = {c: self.maxi(p0.get(c), p1.get(c)) for c in p0.keys() | p1.keys()}
+                self.can_see[h] = {c: self.maxi(p0.get(c), p1.get(c))
+                                   for c in p0.keys() | p1.keys()}
 
 
                 # count distinct paths to distinct nodes
@@ -263,7 +206,6 @@ class Node:
                 self.can_see[h][ev.c] = h
                 if self.round[h] > self.round[ev.p[0]]:
                     self.witnesses[self.round[h]][ev.c] = h
-                    self.famous[h] = Trilean.undetermined
 
     def decide_fame(self):
         max_r = max(self.witnesses)
@@ -276,7 +218,7 @@ class Node:
             for r in range(max_c, r_):
                 if r not in self.consensus:
                     for w in self.witnesses[r].values():
-                        if self.famous[w] == Trilean.undetermined:
+                        if w not in self.famous:
                             yield r, w
 
         def iter_voters():
@@ -284,13 +226,15 @@ class Node:
                 for w in self.witnesses[r_].values():
                     yield r_, w
 
+        done = set()
+
         for r_, y in iter_voters():
+
             hits = defaultdict(int)
             for k in self.can_see[y].values():
                 for c, k_ in self.can_see[k].items():
                     if self.round[k_] == r_ - 1:
                         hits[c] += 1
-
             s = {self.witnesses[r_ - 1][c] for c, n in hits.items()
                  if n > self.min_s}
 
@@ -301,13 +245,8 @@ class Node:
                     v, t = majority(self.votes[w][x] for w in s)
                     if (r_ - r) % C != 0:
                         if t > self.min_s:
-                            if v:
-                               self.famous[x] = Trilean.true
-                            else:
-                               self.famous[x] = Trilean.false
-                            if all(self.famous[w] != Trilean.undetermined
-                                   for w in self.witnesses[r].values()):
-                                self.consensus.add(r)
+                            self.famous[x] = v
+                            done.add(r)
                         else:
                             self.votes[y][x] = v
                     else:
@@ -317,71 +256,53 @@ class Node:
                             # the 1st bit is same as any other bit right?
                             self.votes[y][x] = bool(self.hg[y].s[0] // 128)
 
-    def find_order(self):
-        pass
+        new_c = {r for r in done
+                 if all(w in self.famous for w in self.witnesses[r].values())}
+        self.consensus |= new_c
+        return new_c
+
+
+    def find_order(self, new_c):
+        for r in sorted(new_c):
+            f_w = {w for w in self.witnesses[r].values() if self.famous[w]}
+            print('there are %i famous witnesses' % len(f_w))
+            whitener = reduce(lambda a, b: a ^ int.from_bytes(self.hg[b].s, byteorder='big'), f_w, 0)
+            ts = {}
+            seen = set()
+            for x in bfs(filter(self.tbd.__contains__, f_w), lambda u: self.hg[u].p):
+                if x not in self.tbd:
+                    continue
+                print('tic')
+                c = self.hg[x].c
+                s = {w for w in f_w if c in self.can_see[w] and self.higher(self.can_see[w][c], x)}
+                print(len(s))
+                if len(s) > self.n / 2:
+                    self.tbd.remove(x)
+                    seen.add(x)
+                    times = []
+                    for w in s:
+                        a = w
+                        while c in self.can_see[a] and self.higher(self.can_see[a][c], x) and self.hg[a].p:
+                            a = self.hg[a].p[0]
+                        times.append(self.hg[a].t)
+                    times.sort()
+                    ts[x] = .5 * (times[len(times)//2] + times[(len(times)+1)//2])
+            print('seen in round %i: ' % r, seen)
+            self.transactions += sorted(seen, key=lambda x: (ts[x], whitener ^ int.from_bytes(self.hg[x].s, byteorder='big')))
+
+
 
     def main(self):
         """Main working loop."""
 
+        new = ()
         while True:
-            payload = (yield)
+            payload = (yield new)
+
             # pick a random node to sync with but not me
             c = tuple(self.network.keys() - {self.pk})[randrange(self.n - 1)]
             new = self.sync(c, payload)
-
             self.divide_rounds(new)
-            self.decide_fame()
-            #self.find_order()
 
-    def plot(self, arrows=True, color='rounds'):
-        nodes = {u:i for i, u in enumerate(bfs(self.head, lambda u: self.hg[u].p))}
-        ax = plt.gca()
-        cs = list(colors.cnames)
-        cr = {c: i for i, c in enumerate(self.network)}
-        if color == 'rounds':
-            col = lambda u: 'red' if u in self.famous else cs[self.round[u]]
-        elif color == 'witness':
-            def col(u):
-                if self.hg[u].c in self.witnesses[self.round[u]]:
-                    if self.witnesses[self.round[u]][self.hg[u].c] == u:
-                        if self.famous[u] == Trilean.false:
-                            return 'red'
-                        elif self.famous[u] == Trilean.undetermined:
-                            return 'orange'
-                        else:
-                            return 'green'
-                return 'black'
-
-        xs = lambda u: cr[self.hg[u].c]
-        ys = self.seq.__getitem__
-        if arrows:
-            for u in nodes:
-                for p in self.hg[u].p:
-                    vect = (xs(p)-xs(u), ys(p) - ys(u))
-                    alpha = atan2(vect[1], vect[0])
-                    r = (vect[0]**2 + vect[1]**2)**.5 - .2
-                    vect = (r*cos(alpha), r*sin(alpha))
-                    plt.arrow(xs(u), ys(u), vect[0],
-                              vect[1], head_width=0.1, head_length=0.2,
-                              length_includes_head=True, color='gray')
-        for u in nodes:
-            ax.add_artist(plt.Circle((xs(u), ys(u)), .2 , color=col(u)))
-        plt.xlim(-.5, self.n+.5)
-        plt.ylim(-.5, max(self.seq.values())+.5)
-        plt.show()
-
-
-def test(n_nodes, n_turns):
-    kps = [crypto_sign_keypair() for _ in range(n_nodes)]
-    network = {}
-    nodes = [Node(kp, network, n_nodes) for kp in kps]
-    for n in nodes:
-        network[n.pk] = n.ask_sync
-    mains = [n.main() for n in nodes]
-    for m in mains:
-        next(m)
-    for _ in range(n_turns):
-        r = randrange(n_nodes)
-        print('working node: ', r)
-        next(mains[r])
-    return nodes
+            new_c = self.decide_fame()
+            self.find_order(new_c)
