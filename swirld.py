@@ -33,10 +33,10 @@ class Trilean:
 
 
 class Node:
-    def __init__(self, kp, network):
+    def __init__(self, kp, network, n_nodes):
         self.pk, self.sk = kp
         self.network = network  # {pk -> Node.ask_sync} dict
-        self.n = len(network)
+        self.n = n_nodes
         self.min_s = 2 * self.n / 3  # min stake amount
 
 
@@ -50,12 +50,11 @@ class Node:
         self.tbd = set()
         # [event-hash]: final order of the transactions
         self.transactions = []
+        self.idx = {}
         # {round-num}: rounds where famousness is fully decided
         self.consensus = set()
         # {event-hash => {event-hash => bool}}
         self.votes = defaultdict(dict)
-        # {event-hash => recv-round-num}: assigned 'received round' number
-        self.recv_round = {}
         # {round-num => {member-pk => event-hash}}: 
         self.witnesses = defaultdict(dict)
         self.famous = {}
@@ -262,26 +261,35 @@ class Node:
 
 
     def find_order(self, new_c):
+        to_int = lambda x: int.from_bytes(self.hg[x].s, byteorder='big')
+
         for r in sorted(new_c):
             f_w = {w for w in self.witnesses[r].values() if self.famous[w]}
-            whitener = reduce(lambda a, b: a ^ int.from_bytes(self.hg[b].s, byteorder='big'), f_w, 0)
+            white = reduce(lambda a, b: a ^ to_int(b), f_w, 0)
             ts = {}
             seen = set()
-            for x in bfs(filter(self.tbd.__contains__, f_w), lambda u: filter(self.tbd.__contains__, self.hg[u].p)):
+            for x in bfs(filter(self.tbd.__contains__, f_w),
+                         lambda u: (p for p in self.hg[u].p if p in self.tbd)):
                 c = self.hg[x].c
-                s = {w for w in f_w if c in self.can_see[w] and self.higher(self.can_see[w][c], x)}
+                s = {w for w in f_w if c in self.can_see[w]
+                                    and self.higher(self.can_see[w][c], x)}
                 if len(s) > self.n / 2:
                     self.tbd.remove(x)
                     seen.add(x)
                     times = []
                     for w in s:
                         a = w
-                        while c in self.can_see[a] and self.higher(self.can_see[a][c], x) and self.hg[a].p:
+                        while (c in self.can_see[a]
+                               and self.higher(self.can_see[a][c], x)
+                               and self.hg[a].p):
                             a = self.hg[a].p[0]
                         times.append(self.hg[a].t)
                     times.sort()
-                    ts[x] = .5 * (times[len(times)//2] + times[(len(times)+1)//2])
-            self.transactions += sorted(seen, key=lambda x: (ts[x], whitener ^ int.from_bytes(self.hg[x].s, byteorder='big')))
+                    ts[x] = .5*(times[len(times)//2]+times[(len(times)+1)//2])
+            final = sorted(seen, key=lambda x: (ts[x], white ^ to_int(x)))
+            for i, x in enumerate(final):
+                self.idx[x] = i + len(self.transactions)
+            self.transactions += final
 
 
 
