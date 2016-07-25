@@ -33,10 +33,10 @@ class Trilean:
 
 
 class Node:
-    def __init__(self, kp, network, n):
+    def __init__(self, kp, network):
         self.pk, self.sk = kp
         self.network = network  # {pk -> Node.ask_sync} dict
-        self.n = n
+        self.n = len(network)
         self.min_s = 2 * self.n / 3  # min stake amount
 
 
@@ -156,11 +156,10 @@ class Node:
             c = self.hg[c].p[0]
 
     def maxi(self, a, b):
-        for x, y in zip_longest(self.ancestors(a), self.ancestors(b)):
-            if x == b or y is None:
-                return a
-            elif y == b or x is None:
-                return b
+        if self.higher(a, b):
+            return a
+        else:
+            return b
 
     def higher(self, a, b):
         for x, y in zip_longest(self.ancestors(a), self.ancestors(b)):
@@ -265,17 +264,12 @@ class Node:
     def find_order(self, new_c):
         for r in sorted(new_c):
             f_w = {w for w in self.witnesses[r].values() if self.famous[w]}
-            print('there are %i famous witnesses' % len(f_w))
             whitener = reduce(lambda a, b: a ^ int.from_bytes(self.hg[b].s, byteorder='big'), f_w, 0)
             ts = {}
             seen = set()
-            for x in bfs(filter(self.tbd.__contains__, f_w), lambda u: self.hg[u].p):
-                if x not in self.tbd:
-                    continue
-                print('tic')
+            for x in bfs(filter(self.tbd.__contains__, f_w), lambda u: filter(self.tbd.__contains__, self.hg[u].p)):
                 c = self.hg[x].c
                 s = {w for w in f_w if c in self.can_see[w] and self.higher(self.can_see[w][c], x)}
-                print(len(s))
                 if len(s) > self.n / 2:
                     self.tbd.remove(x)
                     seen.add(x)
@@ -287,7 +281,6 @@ class Node:
                         times.append(self.hg[a].t)
                     times.sort()
                     ts[x] = .5 * (times[len(times)//2] + times[(len(times)+1)//2])
-            print('seen in round %i: ' % r, seen)
             self.transactions += sorted(seen, key=lambda x: (ts[x], whitener ^ int.from_bytes(self.hg[x].s, byteorder='big')))
 
 

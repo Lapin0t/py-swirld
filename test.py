@@ -11,8 +11,6 @@ from swirld import Node
 def plot(node):
     nodes = tuple(bfs((node.head,), lambda u: node.hg[u].p))
     memb = {c: i for i, c in enumerate(node.network)}
-    xs = {u: memb[node.hg[u].c] for u in nodes}
-    ys = {u: node.seq[u] for u in nodes}
     indice = {u: i for i, u in enumerate(node.transactions)}
 
     colors = plasma(len(node.transactions))
@@ -27,7 +25,7 @@ def plot(node):
     p.yaxis.minor_tick_line_color = None
 
     source = ColumnDataSource(data={'xs': [memb[node.hg[u].c] for u in nodes],
-              'ys': [node.seq[u] for u in nodes],
+              'ys': [node.height[u] for u in nodes],
               'cs': [colors[indice.get(u, 0)] for u in nodes],
               'as': [1 if node.famous.get(u) else 0.4 for u in nodes],
               'las': [1 if node.famous.get(u) else 0 for u in nodes]})
