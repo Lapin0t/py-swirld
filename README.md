@@ -61,3 +61,15 @@ transactions.
 With nn and nt respectively the number of nodes and the number of transactions,
 this datastructure adds up O(nn\*nt) space and enables to compute the set of
 witnesses a transaction can strongly see in O(nn^2).
+
+## Work In Progress
+
+- The interactive visualization is still rather crude.
+- There is no strong fork detection when syncing.
+- There is no stake (every node has stake 1).
+- There is no real networking (the _communication_ is really just a method
+  call). This should not be complicated to implement, but I will have to bring
+  in threads, locks and stuff like that. I am actually thinking about embedding
+  the hashgraph in [IPFS](http://ipfs.io/) objects as it fits perfectly (a
+  hashgraph in IPFS nomenclature is a merkle DAG). This would enable to just
+  drop any crypto and network operation as IPFS already takes care of it well.
