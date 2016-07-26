@@ -1,6 +1,7 @@
 import json
 from functools import lru_cache
 from time import time
+from collections import namedtuple
 
 import requests
 
@@ -8,25 +9,62 @@ from utils import bfs, toposort, randrange, median, b58_to_int
 
 
 C = 6
+
 IPFS_API = 'http://127.0.0.1:5001/api/v0'
 
 
-def ipfs(cmd, args):
-    url = IPFS_URL+cmd+'?'+'&'.join('%s=%s' % (k, v)
-                                    for k, v in args)
-    r = requests.get(url)
+def pub_event(ev):
+    data = {'Data': json.dumps({'c': ev.c, 't': ev.t, 'd': ev.d}),
+            'Links': [{'Name': '0', 'Hash': ev.p[0], 'Size': 0},
+                      {'Name': '1', 'Hash': ev.p[1], 'Size': 0}]
+                     if ev.p else []}
+    r = requests.post(IPFS_API + '/object/put?inputenc=json',
+            files={'data': ('foo', json.dumps(data), 'application/json')})
     if r.status_code != 200:
-        raise IOError("error while querying '%s'" % url)
-    return r.text
+        raise IOError("couldn't publish event: %s" % r.text)
+    return json.loads(r.text)["Hash"]
 
-def publish_event(ev):
-    return ipfs('/object/put', {}) #TODO
 
 def set_head(h):
-    ipfs('/name/publish', (('arg', h),))
+    r = requests.post(IPFS_API + '/name/publish?arg=' + h)
+    if r.status_code != 200:
+        raise IOError("couldn't set head: %s" % r.text)
+
 
 def get_head(c):
-    return ipfs('/name/resolve', (('arg', c),)).split('/')[-1]
+    r = requests.get(IPFS_API + '/name/resolve?arg=' + c)
+    if r.status_code != 200:
+        raise IOError("couldn't get remote head: %s" % r.text)
+    return r.text.split('/')[-1]
+
+def get_event(h):
+    r = requests.get(IPFS_API + '/object/get?encoding=json&arg=' + h)
+    if r.status_code != 200:
+        raise IOError("couldn't get event: %s" % r.text)
+    obj = json.loads(r.text)
+    data = json.loads(obj['Data'])
+    return Event(p=tuple(l['Hash'] for l in obj['Links']), **data)
+
+
+def parents(h):
+    r = requests.get(IPFS_API + '/object/links?encoding=json&arg=' + h)
+    if r.status_code != 200:
+        raise IOError("couldn't get parents: %s" % r.text)
+    obj = json.loads(r.text)
+    return tuple(l['Hash'] for l in obj['Links'])
+
+
+def pin_event(h):
+    r = requests.get(IPFS_API + '/pin/add?arg=/ipfs/' + h)
+    if r.status_code != 200:
+        raise IOError("couldn't pin event: %s" % r.text)
+
+
+def unpin_event(h):
+    r = requests.get(IPFS_API + '/pin/rm?arg=/ipfs/' + h)
+    if r.status_code != 200:
+        raise IOError("couldn't unpin event: %s" % r.text)
+
 
 def majority(it):
     hits = [0, 0]
@@ -37,7 +75,7 @@ def majority(it):
     else:
         return True, hits[1]
 
-Event = namedtuple('Event', 'd p t c')
+Event = namedtuple('Event', 'p c t d')
 
 
 def load(s):
@@ -58,49 +96,33 @@ class Node:
         self.min_s = 2 * self.tot_stake / 3  # min stake amount
         self.id = id_
 
-        # event-hash: latest event from me
-        self.head = None
-        # {event-hash => round-num}: assigned round number of each event
         self.round = {}
-        # {event-hash}: events for which final order remains to be determined
         self.tbd = set()
-        # [event-hash]: final order of the transactions
         self.transactions = []
         self.idx = {}
-        # {round-num}: rounds where famousness is fully decided
         self.consensus = set()
-        # {event-hash => {event-hash => bool}}
         self.votes = defaultdict(dict)
-        # {round-num => {member-pk => event-hash}}: 
         self.witnesses = defaultdict(dict)
         self.famous = {}
 
-        # {event-hash => int}: 0 or 1 + max(height of parents) (only useful for
-        # drawing, it may move to viz.py)
         self.height = {}
-        # {event-hash => {member-pk => event-hash}}: stores for each event ev
-        # and for each member m the latest event from m having same round
-        # number as ev that ev can see
         self.can_see = {}
 
         # init first local event
-        ev = Event(None, (), Time(), self.id)
-        h = publish_event(ev)
+        h = pub_event(Event((), self.id, Time(), None))
         set_head(h)
         self.tbd.add(h)
-        self.height[h] = self.round[h] = 0
-        self.witnesses[0][ev.c] = h
-        self.can_see[h] = {ev.c: h}
-
-    def hg(self, h):
-        return load(ipfs('/object/get', (('arg', h), ('encoding', 'json')))))
+        self.height[h] = 0
+        self.round[h] = 0
+        self.witnesses[0][self.id] = h
+        self.can_see[h] = {self.id: h}
 
     def is_valid_event(self, h):
-        ev = self.hg(h)
+        ev = get_event(h)
         return (ev.p == ()
                 or (len(ev.p) == 2
-                    and self.hg(ev.p[0]).c == ev.c
-                    and self.hg(ev.p[1]).c != ev.c))
+                    and get_event(ev.p[0]).c == ev.c
+                    and get_event(ev.p[1]).c != ev.c))
 
     def sync(self, r_id, payload):
         """Return new event hashs in topological order."""
@@ -109,22 +131,22 @@ class Node:
         remote_head = get_head(r_id)
 
         new_evs = tuple(reversed(bfs((remote_head,),
-                lambda u: (p for p in self.hg(u).p if p not in self.height))))
+                lambda u: (p for p in parents(u) if p not in self.height))))
 
         for u in new_evs:
             assert is_valid_event(u)
 
-            ipfs('/pin/add', {'arg': '/ipfs/'+u})
+            pin_event(u)
 
             self.tbd.add(u)
-            p = self.hg(u).p
+            p = parents(u)
             if p == ():
                 self.height[u] = 0
             else:
                 self.height[u] = max(self.height[x] for x in p) + 1
 
-        ev = Event(payload, (get_head(self.id), remote_head), time(), self.id)
-        h = publish_event(ev)
+        h = pub_event(Event((get_head(self.id), remote_head),
+                            self.id, time(), payload))
         set_head(h)
 
         return new + (h,)
@@ -145,7 +167,7 @@ class Node:
         """
 
         for h in events:
-            ev = self.hg(h)
+            ev = get_event(h)
             if ev.p == ():  # this is a root event
                 self.round[h] = 0
                 self.witnesses[0][ev.c] = h
@@ -157,28 +179,28 @@ class Node:
                 p0, p1 = (self.can_see[p] for p in ev.p)
                 self.can_see[h] = {c: self.maxi(p0.get(c), p1.get(c))
                                    for c in p0.keys() | p1.keys()}
+                self.can_see[h][ev.c] = h
 
-                if len(self.strongly_sees(h, r)) > self.min_s:
+                if len(self.strongly_seen(h, r)) > self.min_s:
                     self.round[h] = r + 1
                 else:
                     self.round[h] = r
-                self.can_see[h][ev.c] = h
                 if self.round[h] > self.round[ev.p[0]]:
                     self.witnesses[self.round[h]][ev.c] = h
 
-    def iter_undetermined(self, max_c, r_):
+    def _iter_undetermined(self, max_c, r_):
         for r in range(max_c, r_):
             if r not in self.consensus:
                 for w in self.witnesses[r].values():
                     if w not in self.famous:
                         yield r, w
 
-    def iter_voters(self, max_c, max_r):
+    def _iter_voters(self, max_c, max_r):
         for r_ in range(max_c + 1, max_r + 1):
             for w in self.witnesses[r_].values():
                 yield r_, w
 
-    def strongly_see(self, u, r):
+    def strongly_seen(self, u, r):
         for c, k in self.can_see[u].items():
             if self.round[k] == r:
                 for c_, k_ in self.can_see[k].items():
@@ -193,13 +215,13 @@ class Node:
             max_c += 1
 
         done = set()
-        for r_, y in iter_voters(max_c, max_r):
-            s = {self.witnesses[r_-1][c] for c in self.strongly_see(y, r_ - 1)}
-            for r, x in iter_undetermined(max_c, r_):
+        for r_, y in _iter_voters(max_c, max_r):
+            s = {self.witnesses[r_-1][c] for c in self.strongly_seen(y, r_ - 1)}
+            for r, x in _iter_undetermined(max_c, r_):
                 if r_ - r == 1:
                     self.votes[y][x] = x in s
                 else:
-                    v, t = majority((self.stake[self.hg(w).c], self.votes[w][x]) for w in s)
+                    v, t = majority((self.stake[get_event(w).c], self.votes[w][x]) for w in s)
                     if (r_ - r) % C != 0:
                         if t > self.min_s:
                             self.famous[x] = v
@@ -211,7 +233,7 @@ class Node:
                             self.votes[y][x] = v
                         else:
                             # the 1st bit is same as any other bit right?
-                            self.votes[y][x] = bool(self.hg(y).s[0] // 128)
+                            self.votes[y][x] = bool(b58_to_int(y) % 2)
 
         new_c = {r for r in done
                  if all(w in self.famous for w in self.witnesses[r].values())}
@@ -220,10 +242,10 @@ class Node:
 
 
     def _earliest_ancestor(self, a, x):
-        c = self.hg(x).c
+        c = get_event(x).c
         while (c in self.can_see[a] and self.higher(self.can_see[a][c], x)
-               and self.hg(a).p):
-            a = self.hg(a).p[0]
+               and parents(a)):
+            a = parents(a)[0]
         return a
 
     def find_order(self, new_c):
@@ -234,19 +256,22 @@ class Node:
             final = []
 
             for x in bfs((w for w in f_w if w in self.tbd),
-                         lambda u: (p for p in self.hg(u).p if p in self.tbd)):
+                         lambda u: (p for p in parents(u) if p in self.tbd)):
 
-                c = self.hg(x).c
+                c = get_event(x).c
                 s = {w for w in f_w if c in self.can_see[w]
                      and self.higher(self.can_see[w][c], x)}
-                if sum(self.stake[self.hg(w).c] for w in s) > self.tot_stake / 2:
-                    ts = median([self.hg(self._earliest_ancestor(w, x)).t for w in s])
-                    final.append((ts, white ^ b58_to_int(x), x)
+                if sum(self.stake[get_event(w).c] for w in s) > self.tot_stake / 2:
+                    ts = median([get_event(self._earliest_ancestor(w, x)).t for w in s])
+                    final.append((ts, white ^ b58_to_int(x), x))
 
             final.sort()
             for i, x in enumerate(final):
-                self.tbd.remove(x[2])
-                self.idx[x[2]] = i + len(self.transactions)
+                u = x[2]
+                self.tbd.remove(u)
+                self.idx[u] = i + len(self.transactions)
+                unpin
+                del self.can_see[u]
             self.transactions += final
 
     def main(self):

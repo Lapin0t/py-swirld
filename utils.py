@@ -15,7 +15,7 @@ def b58_to_int(s):
     n = 0
     for c in s:
         n = 58 * n + alphabet[c]
-    retrun n
+    return n
 
 
 def toposort(nodes, parents):
