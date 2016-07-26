@@ -3,6 +3,21 @@ from collections import deque
 from pysodium import randombytes
 
 
+def median(l):
+    l.sort()
+    return .5*(times[len(l)//2]+times[(len(l)+1)//2])
+
+
+alphabet = {c: i for i, c in enumerate(
+    '123456789abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ')}
+
+def b58_to_int(s):
+    n = 0
+    for c in s:
+        n = 58 * n + alphabet[c]
+    retrun n
+
+
 def toposort(nodes, parents):
     seen = {}
     def visit(u):
