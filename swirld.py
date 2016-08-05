@@ -270,8 +270,10 @@ class Node:
                 u = x[2]
                 self.tbd.remove(u)
                 self.idx[u] = i + len(self.transactions)
-                unpin
+                #unpin_event(u) #TODO
+                # remove now useless data
                 del self.can_see[u]
+                del self.witnesses[r]
             self.transactions += final
 
     def main(self):
