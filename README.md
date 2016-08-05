@@ -1,8 +1,9 @@
 # py-swirld
 
-Just fooling around the _Swirld_ byzantine consensus algorithm by Leemon Baird
+Just fooling around the _Swirlds_ byzantine consensus algorithm by Leemon Baird
 ([whitepaper](http://www.swirlds.com/wp-content/uploads/2016/07/SWIRLDS-TR-2016-01.pdf)
-available) in python.
+available) in python. _Swirlds_ is an algorithm constructing a strongly
+consistent and partition tolerant, peer-to-peer append-only log.
 
 It seems to work as intended to me but don't take it for granted!
 
@@ -63,14 +64,24 @@ With nn and nt respectively the number of nodes and the number of transactions,
 this datastructure adds up O(nn\*nt) space and enables to compute the set of
 witnesses a transaction can strongly see in O(nn^2).
 
+## IPFS
+
+A variant lives in the `ipfs` branch. This variant uses [IPFS](http://ipfs.io/)
+as a backend to store the hashgraph. Indeed a swirlds _hashgraph_ is just the
+same as an IPFS _merkle DAG_. This enables global deduplication of the
+hashgraph (bandwith and computation efficient syncing between members). The
+syncing process is just about getting the head of the remote member. As the
+head of a member is stored in an IPNS record, this code is currently very slow,
+but a lot of work is currently going on on the IPFS side to improve IPNS (_cf_
+[IPRS](https://github.com/ipfs/go-iprs)).
+
 ## Work In Progress
 
 - The interactive visualization is still rather crude.
 - There is no strong fork detection when syncing.
-- There is no stake (every node has stake 1).
 - There is no real networking (the _communication_ is really just a method
   call). This should not be complicated to implement, but I will have to bring
   in threads, locks and stuff like that. I am actually thinking about embedding
-  the hashgraph in [IPFS](http://ipfs.io/) objects as it fits perfectly (a
-  hashgraph in IPFS nomenclature is a merkle DAG). This would enable to just
-  drop any crypto and network operation as IPFS already takes care of it well.
+  the hashgraph in [IPFS](http://ipfs.io/) objects as it fits perfectly. This
+  would enable to just drop any crypto and network operation as IPFS already
+  takes care of it well.
