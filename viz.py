@@ -1,3 +1,6 @@
+# -*- coding: utf-8 -*-
+
+
 from random import shuffle
 import sys
 from base64 import b64encode

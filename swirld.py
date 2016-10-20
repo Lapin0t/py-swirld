@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 from collections import namedtuple, defaultdict
 from pickle import dumps, loads
 from random import choice
