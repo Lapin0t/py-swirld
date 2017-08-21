@@ -1,3 +1,5 @@
+_Update: see [last paragraph](#some-updates) for some important status update._
+
 # py-swirld
 
 Just fooling around the _Swirlds_ byzantine consensus algorithm by Leemon Baird
@@ -6,6 +8,7 @@ available) in python. _Swirlds_ is an algorithm constructing a strongly
 consistent and partition tolerant, peer-to-peer append-only log.
 
 It seems to work as intended to me but don't take it for granted!
+
 
 ## Dependencies
 
@@ -85,3 +88,121 @@ but a lot of work is currently going on on the IPFS side to improve IPNS (_cf_
   the hashgraph in [IPFS](http://ipfs.io/) objects as it fits perfectly. This
   would enable to just drop any crypto and network operation as IPFS already
   takes care of it well.
+
+## Some updates
+
+_AKA why swirlds isn't *that* much interesting_
+
+Following [this issue](https://github.com/Lapin0t/py-swirld/issues/1), I want
+to stress some things (also explaining why I stopped to be interested in
+swirlds).
+
+There are two flaws in this protocol which are somewhat related. The first one
+is that the protocol cannot scale very well (ie have sublinear complexity in
+the number of nodes for message handling) and the second one is that it doesn't
+handle open-membership.
+
+These issues may not be relevant if you want a distributed db in a medium-sized
+closed organisation having some external centralized auth system. But this is
+important if you want to make an internet-sized distributed db which has
+absolutely no owner and no centralized registration service.
+
+I'm gonna start with the second issue. To have a distributed db with
+open-membership you *must* have protocol handling open-membership, you can't
+make some construction with a second distributed db for the current stake
+repartition with swirlds because there should then be a fixed set of "stake
+validators". Some solutions proposed on swirlds.com are:
+
+- an invite system where one gives a share of it's stake to people he's
+  inviting, not trivial to do and the one starting the network has full power
+  until he gives some away
+- rely on some external mean (associating with a bitcoin wallet etc), that's
+  aweful because this should be something replacing it
+- use PoW for the stake, hurray, we just got back to a blockchain
+
+They are all wacky because there is no mean to transform a closed membership
+protocol into an open one.
+
+The first issue gives a hint why it is probably not interesting to use any hack
+or external mean to turn swirlds into an open-membership protocol: just try to
+think of an efficient algorithm for the voting part (`divide_rounds`,
+`decide_fame`, ...), you must in one way or another iterate through all members
+(and probably also through some part of their respective transaction history)
+so each transaction takes a time *at least* linear in the number of nodes. Sure
+you can sync only with a few people, maybe O(log n) or even O(1) using a
+carefully choosen De Bruijn graph but you will still need to maintain the full
+hashgraph and iterate through witness transactions (and there is one for each
+node), there's no escaping from the O(n) time and space lower bound and linear
+complexity is bad(tm). Any decent distributed database that wants internet
+scale should be having time and space bounds at most Omega(log n) for incoming
+events processing.
+
+So bottom line: don't star this repo, this algorithm is bad ;).
+
+### Conclusion
+
+Why do you actually need strong consensus? (tldr: you don't)
+
+1. Probably you want to create a new cryptocurrency, but crypto-currencies are
+   mostly shitty in the sense that the 2 groups interested in them are (1)
+   speculators which are people how's job is to scam other people (yep, their
+   job is mostly to buy things lower than what people think it's worth and
+   resell it higher, having no interaction at all with the underlying physical
+   object of their transactions), they only care about how much money will be
+   in their pocket at the end. I don't think it has any sense to design an
+   economic system where you can get money without creating anything, physical
+   or intellectual) (2) right-libertarian who love capitalism: nope guys, the
+   market isn't automagically stabilizing, it strives to make rich people
+   richer and poor people poorer, which is quite the oposite of convergence.
+   So at the end, i have nothing special against *crypto*-currencies per se,
+   it's just that it has attracted quite a lot of attention from uninteresting
+   people that have uninteresting and very conservative ideas.
+
+2. Maybe you're writing this awesome service that is fully distributed (p2p)
+   and you need some structure to handle shared mutable data. You should think
+   twice about what real guarantees you need, because high chance are that you
+   can overcome weak consensus. There are loads of distributed datastructures
+   that take advantage of providing lower guarantees but still be on point for
+   a particular use.
+
+   - DHT will be great for a cache and if you're adventurous you can go read
+     some papers about distributed skip-lists and skip-graph.
+   - A lot of abstract datastructures (mostly sets and counters) have CRDT
+     implementations which you can use. You can then plug an anti-entropy (or
+     epidemic) protocol to synchronize the states in an eventually consistent
+     fashion.
+   - Networking is hard, if you need something like decentralized pub/sub, you
+     should take a look at the Matrix protocol. It's highly unstable and I have
+     some criticism on their protocol, but they're trying to solve this
+     problem.
+
+3. Oh so you do need strong consensus with open membership because you want to
+   create a replacement protocol for naming things on the internet? Somewhat a
+   mix between DNS and SSL-PKI? and distributed keybase? Sure, that's a good
+   goal, but at first, you shouldn't rely on unique global identifiers that are
+   not self-authentifying (so you shouldn't need strong consistency for that
+   part). That said, strong consistency might be useful in this case. You
+   should probably take a look at SCP (stellar consensus protocol), this one
+   should be good.
+
+### Post-Scriptum
+
+Please don't ever use or mention blockchain protocols. If you encounter someone
+who does, please repeat him the following (or just go away from him, chances
+are he falls into one of the two categories of first conclusion bullet and he
+will be much harder to deal with).
+
+Blockchains are ledgers, not generic databases. Sure you can build a
+generic database on top of a ledger, but i'm not sure we would like a world
+where every database would be a dictionary mapping unique IDs to integers.
+
+PoW blockchain's security claims rely on:
+
+- The protocol's own inefficiency. The only slow part is block creation and
+  making it fast would render the protocol trivially insecure.
+- The fact that users rational. Maybe we are maybe not, the problem is that is
+  just a fancy way of saying they assume users want to maximise the number of
+  currency-tokens they have which is *not* a valid assumption: adversaries will
+  surely not behave in a manner that maximises their tokens, they only want to
+  crash your system. Instead you should target a byzantine-fault tolerant
+  protocol.
