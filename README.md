@@ -3,7 +3,7 @@ _Update: see [last paragraph](#some-updates) for some important status update._
 # py-swirld
 
 Just fooling around the _Swirlds_ byzantine consensus algorithm by Leemon Baird
-([whitepaper](http://www.swirlds.com/wp-content/uploads/2016/07/SWIRLDS-TR-2016-01.pdf)
+([whitepaper](https://www.swirlds.com/downloads/SWIRLDS-TR-2016-01.pdf)
 available) in python. _Swirlds_ is an algorithm constructing a strongly
 consistent and partition tolerant, peer-to-peer append-only log.
 
